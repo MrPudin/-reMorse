@@ -1,0 +1,2 @@
+-I./yotta_modules/microbit/inc
+-I./yotta_modules/microbit-dal/inc
