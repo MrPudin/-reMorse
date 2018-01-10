@@ -21,4 +21,4 @@ clean:
 	yt clean
 
 remove:
-	rm /Volumes/MICROBIT/$(TARGET)-combined.hex
+	rm /mnt/MICROBIT/$(TARGET)-combined.hex
