@@ -7,18 +7,12 @@
 #include <cstdlib>
 
 #define MED_INSERT_CHAR_BUF_LEN 8
-#define MED_WORK_BUF_LEN 400
+#define MED_INSERT_BUF_LEN 100
+#define MED_TELECOM_BUF_LEN 100
+#define MED_LOG_BUF_LEN 700
+#define MED_NETWORK_GROUP 404
 
-MicroBit uBit;
-
-typedef enum
-{
-    MODE_INSERT = 1,
-    MODE_GLOBAL = 2,
-}MODE;
-
-MODE med_operation_mode = MODE_INSERT;
-
+//Display Images
 MicroBitImage image_download("\
         0 0 1 0 0\n\
         0 0 1 0 0\n\
@@ -41,14 +35,21 @@ MicroBitImage image_insert_mode("\
         1 0 0 0 1\n");
 
 
-MicroBitImage image_transmit_mode("\
-        1 1 0 0 0\n\
-        1 0 1 1 1\n\
-        1 0 1 0 0\n\
-        1 0 1 1 0\n\
-        1 1 0 0 1\n"); 
+MicroBitImage image_global_mode("\
+        0 0 1 1 1\n\
+        0 1 0 0 0\n\
+        0 1 0 1 1\n\
+        0 1 0 0 1\n\
+        0 0 1 1 0\n"); 
 
 
+MicroBitImage image_telecom_mode("\
+        0 1 1 1 0\n\
+        1 0 0 0 1\n\
+        0 0 1 0 0\n\
+        0 1 0 1 0\n\
+        0 0 1 0 0\n");
+    
 MicroBitImage image_delete("\
         1 1 1 1 1\n\
         1 0 1 0 1\n\
@@ -70,7 +71,19 @@ MicroBitImage image_keyboard("\
         1 1 1 1 1\n\
         0 0 0 0 0\n"); 
 
-//Morse Code Translater
+
+MicroBit uBit;
+
+//Operation mode
+typedef enum
+{
+    MODE_INSERT = 1,
+    MODE_GLOBAL = 2,
+    MODE_TELECOM = 3,
+}MODE;
+MODE med_operation_mode = MODE_INSERT;
+
+//Morse Code Translation
 static const char MORSE_TO_CHAR[128] = {
     '\0', '\0', 'E', 'T', 'I', 'N', 'A', 'M',
     'S', 'D', 'R', 'G', 'U', 'K', 'W', 'O',
@@ -117,7 +130,6 @@ static char *insert_char_buf = nullptr;
 static char *insert_char_pos = nullptr;
 bool insert_keyboard_mode = false;
 
-
 void insert_char_init()
 {
     if(!insert_char_buf)
@@ -153,24 +165,22 @@ char insert_char_get()
     return result;
 }
 
-static char *work_buf = nullptr;
+static char *insert_buf = nullptr;
 static char *insert_pos = nullptr;
 
-void work_init()
+void insert_init()
 {
-    if(!work_buf) 
+    if(!insert_buf) 
     {
-        work_buf = new char[MED_WORK_BUF_LEN];
-        memset(work_buf, 0, sizeof(char) * MED_WORK_BUF_LEN);
-        
-        insert_pos = work_buf;
+        insert_buf = new char[MED_INSERT_BUF_LEN];
+        memset(insert_buf, 0, sizeof(char) * MED_INSERT_BUF_LEN);
+        insert_pos = insert_buf;
     }
-
 }
 
 void insert_append(char c)
 {
-    work_init();
+    insert_init();
 
     *insert_pos = c;
     insert_pos++;
@@ -178,9 +188,9 @@ void insert_append(char c)
 
 void insert_delete()
 {
-    if(!work_buf) return;
+    if(!insert_buf) return;
 
-    if(insert_pos == work_buf) return; //Do nothing if nothing in buf
+    if(insert_pos == insert_buf) return; //Do nothing if nothing in buf
     insert_pos--;
     if(*insert_pos == '\n') //New line comprises of 2 characters
     {
@@ -193,18 +203,113 @@ void insert_delete()
 
 void insert_reset()
 {
-    work_init();
+    insert_init();
 
-    memset(work_buf, 0, sizeof(char) * MED_WORK_BUF_LEN);
-    insert_pos = work_buf;
+    memset(insert_buf, 0, sizeof(char) * MED_WORK_BUF_LEN);
+    insert_pos = insert_buf;
 }
 
 char *insert_data()
 {
-    if(!work_buf) return nullptr;
+    if(!insert_buf) return nullptr;
     *insert_pos = '\0';
-    return work_buf;
+    return insert_buf;
 }
+
+size_t insert_size()
+{
+    return insert_pos - insert_buf;
+}
+
+char *telecom_buf = nullptr;
+char *telecom_pos = nullptr;
+
+//const char *telecom_ping = "@PING@";
+const char *telecom_begin = "@BEGIN@";
+const char *telecom_end = "@END@";
+bool telecom_delivery = false;
+
+void telecom_init()
+{
+    if(!telecom_buf)
+    {
+        telecom_buf = new char[MED_TELECOM_BUF_LEN];
+        memset(telecom_buf,0,sizeof(char)*MED_WORK_BUF_LEN);
+        telecom_pos = telecom_buf;
+    }
+}
+
+char *telecom_data()
+{
+    if(!telecom_buf) telecom_init();
+    if(!telecom_delivery)
+    {
+        *(telecom_pos + 1) = '\0';
+        return telecom_buf;
+    }
+    else return nullptr;
+}
+ 
+void telecom_append(const char *data, size_t len)
+{
+    if(!telecom_buf) telecom_init();
+    if(telecom_pos - telecom_buf + len >= 100)
+    {
+        telecom_delivery = false;
+        return;
+    }
+    
+    memcpy(telecom_pos, data, len);
+    telecom_pos += len;
+}
+
+void telecom_write(const char *data, size_t len)
+{
+    telecom_reset();
+    memcpy(telecom_pos, data, len);
+    telecom_pos += len;
+}
+
+void telecom_send()
+{
+    uBit.radio.datagram.send(ManagedString(telecom_begin));
+    int transmission_len = telecom_pos - telecom_pos + 1;
+    int sent = 0;
+    for(int i = 0;  i < transmission_len / 32 + 1; i ++)
+    {
+        ManagedString data(telecom_data() + sent, (transmission_len < 32) ? transmission_len : 32);
+        transmission_len -= data.length();
+        sent += data.length();
+        uBit.radio.datagram.send(data);
+    }
+    uBit.radio.datagram.send(ManagedString(telecom_end));
+}
+
+void telecom_reset()
+{
+    if(!telecom_buf) return;
+    memset(telecom_buf,0,sizeof(char)*MED_WORK_BUF_LEN);
+    telecom_pos = telecom_buf;
+}
+ 
+void handle_telecom(MicroBitEvent e)
+{
+    ManagedString s = uBit.radio.datagram.recv();
+    if(s == ManagedString(telecom_begin))
+    {
+        telecom_reset();
+        telecom_delivery = true;
+    }
+    else if(s == ManagedString(telecom_end))
+    {
+        telecom_delivery = false;
+    }
+    else if(telecom_delivery)
+    {
+        telecom_append(s.toCharArray(), s.length());
+    }
+}
+
 
 //Event Handlers
 bool button_syn_status = true;
@@ -216,7 +321,6 @@ bool button_syn()
     if(!button_syn_status) return false;
     else return true;
 }
-
 
 void handle_button_A(MicroBitEvent e)
 {
@@ -242,6 +346,16 @@ void handle_button_A(MicroBitEvent e)
         else if(e.value == MICROBIT_BUTTON_EVT_HOLD)
         {
             uBit.serial.printf("%s\r\n", insert_data());
+            uBit.display.print(image_upload);
+            uBit.sleep(1000);
+            uBit.display.clear();
+        }
+    }
+    else if(med_operation_mode == MODE_TELECOM)
+    {
+        if(e.value == MICROBIT_BUTTON_EVT_CLICK)
+        {
+            telecom_write(insert_data(), insert_size());
             uBit.display.print(image_upload);
             uBit.sleep(1000);
             uBit.display.clear();
@@ -310,6 +424,14 @@ void handle_button_B(MicroBitEvent e)
             uBit.display.scroll("OK");
         }
     }
+    else if(med_operation_mode == MODE_TELECOM)
+    {
+        if(e.value == MICROBIT_BUTTON_EVT_CLICK)
+        {
+            uBit.display.clear();
+            uBit.display.scroll(telecom_data());
+        }
+    }
 }
 
 void handle_button_AB(MicroBitEvent e)
@@ -321,7 +443,7 @@ void handle_button_AB(MicroBitEvent e)
         if (e.value == MICROBIT_BUTTON_EVT_HOLD)
         {
             med_operation_mode = MODE_GLOBAL;
-            uBit.display.print(image_transmit_mode);
+            uBit.display.print(image_global_mode);
             uBit.sleep(1000);
             uBit.display.clear();
         }
@@ -340,8 +462,8 @@ void handle_button_AB(MicroBitEvent e)
     {
         if(e.value == MICROBIT_BUTTON_EVT_HOLD)
         {
-            med_operation_mode = MODE_INSERT;
-            uBit.display.print(image_insert_mode);
+            med_operation_mode = MODE_TELECOM;
+            uBit.display.print(image_telecom_mode);
             uBit.sleep(1000);
             uBit.display.clear();
         }
@@ -354,6 +476,17 @@ void handle_button_AB(MicroBitEvent e)
             else uBit.display.scroll("OFF");
         }
     }
+    else if(med_operation_mode == MODE_TELECOM)
+    {
+        if(e.value == MICROBIT_BUTTON_EVT_HOLD)
+        {
+            med_operation_mode = MODE_INSERT;
+            uBit.display.print(image_insert_mode);
+            uBit.sleep(1000);
+            uBit.display.clear();
+        }
+    }
+    
     
     button_syn_status = true;
 }
@@ -384,7 +517,8 @@ int main()
     uBit.messageBus.listen(MICROBIT_ID_BUTTON_B, MICROBIT_EVT_ANY, handle_button_B, MESSAGE_BUS_LISTENER_REENTRANT);
     uBit.messageBus.listen(MICROBIT_ID_GESTURE, MICROBIT_EVT_ANY, handle_gesture, MESSAGE_BUS_LISTENER_REENTRANT);
 
-    // We don't want to drop out of main!
-    while(1)
-        uBit.sleep(100);
+    uBit.messageBus.listen(MICROBIT_ID_RADIO, MICROBIT_RADIO_EVT_DATAGRAM, onData);
+    uBit.radio.enable();
+    
+    release_fibre();
 }
