@@ -10,7 +10,7 @@
 #define MED_INSERT_BUF_LEN 100
 #define MED_TELECOM_BUF_LEN 100
 #define MED_LOG_BUF_LEN 700
-#define MED_NETWORK_GROUP 404
+#define MED_TELECOM_GROUP 48
 
 //Display Images
 MicroBitImage image_download("\
@@ -205,7 +205,7 @@ void insert_reset()
 {
     insert_init();
 
-    memset(insert_buf, 0, sizeof(char) * MED_WORK_BUF_LEN);
+    memset(insert_buf, 0, sizeof(char) * MED_INSERT_BUF_LEN);
     insert_pos = insert_buf;
 }
 
@@ -225,8 +225,8 @@ char *telecom_buf = nullptr;
 char *telecom_pos = nullptr;
 
 //const char *telecom_ping = "@PING@";
-const char *telecom_begin = "@BEGIN@";
-const char *telecom_end = "@END@";
+const char *telecom_begin = "^@BEGIN@^";
+const char *telecom_end = "^@END@^";
 bool telecom_delivery = false;
 
 void telecom_init()
@@ -234,7 +234,7 @@ void telecom_init()
     if(!telecom_buf)
     {
         telecom_buf = new char[MED_TELECOM_BUF_LEN];
-        memset(telecom_buf,0,sizeof(char)*MED_WORK_BUF_LEN);
+        memset(telecom_buf,0,sizeof(char)*MED_INSERT_BUF_LEN);
         telecom_pos = telecom_buf;
     }
 }
@@ -250,17 +250,25 @@ char *telecom_data()
     else return nullptr;
 }
  
-void telecom_append(const char *data, size_t len)
+void telecom_reset()
 {
+    if(!telecom_buf) return;
+    memset(telecom_buf,0,sizeof(char)*MED_INSERT_BUF_LEN);
+    telecom_pos = telecom_buf;
+}
+
+void telecom_append(char c)
+{
+    uBit.serial.printf("debug: telecom_append()\r\n");
     if(!telecom_buf) telecom_init();
-    if(telecom_pos - telecom_buf + len >= 100)
+    if(telecom_pos - telecom_buf >= 100)
     {
-        telecom_delivery = false;
         return;
     }
     
-    memcpy(telecom_pos, data, len);
-    telecom_pos += len;
+    telecom_pos ++;
+    *telecom_pos = c;
+    uBit.serial.printf("debug: telecom buf: %s\r\n", telecom_data());
 }
 
 void telecom_write(const char *data, size_t len)
@@ -272,29 +280,30 @@ void telecom_write(const char *data, size_t len)
 
 void telecom_send()
 {
+    uBit.serial.printf("debug: telecom_send()\r\n");
     uBit.radio.datagram.send(ManagedString(telecom_begin));
-    int transmission_len = telecom_pos - telecom_pos + 1;
-    int sent = 0;
-    for(int i = 0;  i < transmission_len / 32 + 1; i ++)
+    int transmission_len = telecom_pos - telecom_buf + 1;
+    char *send_pos = telecom_data();
+    
+    for(int i = 0;  i < transmission_len; i ++)
     {
-        ManagedString data(telecom_data() + sent, (transmission_len < 32) ? transmission_len : 32);
-        transmission_len -= data.length();
-        sent += data.length();
+        packet_buf[0] = *send_pos;
+        ManagedString data(packet_buf, 1);
         uBit.radio.datagram.send(data);
+        send_pos ++;
     }
+    uBit.serial.printf("debug: telecom_send(): end\r\n", telecom_delivery);
     uBit.radio.datagram.send(ManagedString(telecom_end));
 }
 
-void telecom_reset()
-{
-    if(!telecom_buf) return;
-    memset(telecom_buf,0,sizeof(char)*MED_WORK_BUF_LEN);
-    telecom_pos = telecom_buf;
-}
  
 void handle_telecom(MicroBitEvent e)
 {
+    uBit.serial.printf("debug: handle_telecom()\r\n");
     ManagedString s = uBit.radio.datagram.recv();
+    int len = (long) s.length();
+    uBit.serial.printf("debug: data: %s\r\n", s.toCharArray());
+    uBit.serial.printf("debug telecom_delivery: %d\r\n", telecom_delivery);
     if(s == ManagedString(telecom_begin))
     {
         telecom_reset();
@@ -306,7 +315,8 @@ void handle_telecom(MicroBitEvent e)
     }
     else if(telecom_delivery)
     {
-        telecom_append(s.toCharArray(), s.length());
+    uBit.serial.printf("debug: data: %s\r\n", s.toCharArray());
+        telecom_append(s.charAt(9));
     }
 }
 
@@ -356,6 +366,7 @@ void handle_button_A(MicroBitEvent e)
         if(e.value == MICROBIT_BUTTON_EVT_CLICK)
         {
             telecom_write(insert_data(), insert_size());
+            telecom_send();
             uBit.display.print(image_upload);
             uBit.sleep(1000);
             uBit.display.clear();
@@ -412,7 +423,7 @@ void handle_button_B(MicroBitEvent e)
 
             size_t len = 0;
             
-            while(len < MED_WORK_BUF_LEN)
+            while(len < MED_INSERT_BUF_LEN)
             {
                 int c = uBit.serial.read(ASYNC);
                 if(c == MICROBIT_NO_DATA) continue;
@@ -517,8 +528,9 @@ int main()
     uBit.messageBus.listen(MICROBIT_ID_BUTTON_B, MICROBIT_EVT_ANY, handle_button_B, MESSAGE_BUS_LISTENER_REENTRANT);
     uBit.messageBus.listen(MICROBIT_ID_GESTURE, MICROBIT_EVT_ANY, handle_gesture, MESSAGE_BUS_LISTENER_REENTRANT);
 
-    uBit.messageBus.listen(MICROBIT_ID_RADIO, MICROBIT_RADIO_EVT_DATAGRAM, onData);
-    uBit.radio.enable();
+    uBit.messageBus.listen(MICROBIT_ID_RADIO, MICROBIT_RADIO_EVT_DATAGRAM, handle_telecom);
+    uBit.radio.setGroup(MED_TELECOM_GROUP);
+    if(uBit.radio.enable() != MICROBIT_OK) uBit.panic();
     
-    release_fibre();
+    release_fiber();
 }
