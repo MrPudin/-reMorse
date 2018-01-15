@@ -139,8 +139,7 @@ void char_init()
 void char_bit(bool state)
 {
     if(state) *char_pos = '-';
-    else *char_pos = '.';
-    
+    else *char_pos = '.'; 
     char_pos++;
 }
 
@@ -215,26 +214,33 @@ size_t insert_size()
 //Telecom
 const char *telecom_marker_begin = "^@BEGIN@^";
 const char *telecom_marker_end = "^@END@^";
-char *telecom_buf = nullptr;
+char *telecom_recieve_buf = nullptr;
 char *telecom_recieve_pos = nullptr;
 
 void telecom_init()
 {
-    if(!telecom_buf)
+    if(!telecom_recieve_buf)
     {
-        telecom_buf = new char[MED_TELECOM_BUF_LEN];
-        memset(telecom_buf,0, sizeof(char) * MED_TELECOM_BUF_LEN);
+        telecom_recieve_buf = new char[MED_TELECOM_BUF_LEN];
+        memset(telecom_recieve_buf,0, sizeof(char) * MED_TELECOM_BUF_LEN);
     }
     
     telecom_recieve_pos = nullptr;
 }
 
+void telecom_reset()
+{
+    telecom_recieve_pos = nullptr;
+    memset(telecom_recieve_buf,0, sizeof(char) * MED_TELECOM_BUF_LEN);
+
+}
 void telecom_send(char *data, size_t len)
 {
     uBit.radio.datagram.send(ManagedString(telecom_marker_begin));
+    size_t send_len = (len < MED_TELECOM_BUF_LEN) ? len : MED_TELECOM_BUF_LEN;
 
     char packet_buf[2] = {'0', '0'};
-    for(size_t i = 0; i < len; i++)
+    for(size_t i = 0; i < send_len; i++)
     {
         packet_buf[0] = *(data + i);
         uBit.radio.datagram.send(ManagedString(packet_buf));
@@ -247,8 +253,12 @@ void telecom_recv(char data)
 {
     if(telecom_recieve_pos) 
     {
-        *telecom_recieve_pos = data;
-        telecom_recieve_pos++;
+        if(telecom_recieve_pos - telecom_recieve_buf < MED_TELECOM_BUF_LEN)
+        {
+            *telecom_recieve_pos = data;
+            telecom_recieve_pos++;
+        }
+        else telecom_recieve_pos = nullptr;
     }
 }
 
@@ -258,7 +268,10 @@ void handle_telecom(MicroBitEvent e)
     {
         ManagedString s = uBit.radio.datagram.recv();
         if(s == ManagedString(telecom_marker_begin))
-            telecom_recieve_pos = telecom_buf;
+        {
+            telecom_reset();
+            telecom_recieve_pos = telecom_recieve_buf;
+        }
         else if(s == ManagedString(telecom_marker_end))
             telecom_recieve_pos = nullptr;
         else if(telecom_recieve_pos)
@@ -266,42 +279,55 @@ void handle_telecom(MicroBitEvent e)
     }
 }
 
-//Hardware Event Handlers
-bool button_syn_status = true;
+/*Button Wait Function to prevent multiple event handlers from running when
+ Pressing more than one button (ie A+B should not raise the event handlers
+ for A or B) */
+bool button_wait_status = true;
 
-bool button_syn()
+bool button_wait()
 {
     fiber_sleep(20);
     
-    if(!button_syn_status) return false;
+    if(!button_wait_status) return false;
     else return true;
 }
 
+//Hardware Event Handlers
 void handle_button_A(MicroBitEvent e)
 {
-    if(!button_syn()) return;
+    if(!button_wait()) return; //Prevent button event overlap
 
     if(med_operation_mode == MODE_INSERT)
     {
+        //Choose Character Using Morse code from button A
         uBit.display.clear();
-        //Morse Code Insert
         if (e.value == MICROBIT_BUTTON_EVT_CLICK)
             char_bit(false);
         else if (e.value == MICROBIT_BUTTON_EVT_HOLD)
             char_bit(true);
-        uBit.display.printChar(char_get());
+        //Display current char so that the user know what he/she is typing
+        uBit.display.printChar(char_get()); 
+    }
+    else if(med_operation_mode == MODE_TELECOM)
+    {
+        //Broadcast currently inserted
+        telecom_send(insert_data(), insert_size());
+
+        uBit.display.print(image_upload);
+        uBit.sleep(1000);
+        uBit.display.clear();
     }
 }
 
 void handle_button_B(MicroBitEvent e)
 {
-    if(!button_syn()) return;
+    if(!button_wait()) return; //Prevent button event overlap
 
     if(med_operation_mode == MODE_INSERT)
     {
         if (e.value == MICROBIT_BUTTON_EVT_CLICK)
         {
-            //Insert Char
+            //Insert Char entered
             uBit.display.scroll("|",35);
 
             insert_append(char_get());
@@ -311,6 +337,7 @@ void handle_button_B(MicroBitEvent e)
         }
         else if(e.value == MICROBIT_BUTTON_EVT_HOLD)
         {
+            //Backspace: Delete previously enetered character
             insert_delete();
 
             uBit.display.print(image_delete);
@@ -318,16 +345,28 @@ void handle_button_B(MicroBitEvent e)
             uBit.display.clear();
         }
     }
+    else if(med_operation_mode == MODE_TELECOM)
+    {
+        //Display Recieved
+        uBit.display.print(image_download);
+        uBit.sleep(500);
+        uBit.display.clear();
+        
+        uBit.display.scroll(telecom_recieve_buf);
+        uBit.display.clear();
+    }
 }
 
 void handle_button_AB(MicroBitEvent e)
 {
-    button_syn_status = false;
+    button_wait_status = false; //Mark possible button colision
 
     if(med_operation_mode == MODE_INSERT)
     {
         if(e.value == MICROBIT_BUTTON_EVT_HOLD)
         {
+            //Switch to Telecom Mode
+            uBit.display.clear();
             med_operation_mode = MODE_TELECOM;
             uBit.display.print(image_telecom_mode);
             uBit.sleep(1000);
@@ -335,6 +374,7 @@ void handle_button_AB(MicroBitEvent e)
         }
         else if(e.value == MICROBIT_BUTTON_EVT_CLICK)
         {
+            //Enter: Insert newline symbols.
             insert_append('\r'); 
             insert_append('\n'); 
 
@@ -347,6 +387,8 @@ void handle_button_AB(MicroBitEvent e)
     {
         if(e.value == MICROBIT_BUTTON_EVT_HOLD)
         {
+            //Switch to Insert Mode
+            uBit.display.clear();
             med_operation_mode = MODE_INSERT;
             uBit.display.print(image_insert_mode);
             uBit.sleep(1000);
@@ -354,8 +396,7 @@ void handle_button_AB(MicroBitEvent e)
         }
     }
     
-    
-    button_syn_status = true;
+    button_wait_status = true; //Mark possible button colission
 }
 
 void handle_gesture(MicroBitEvent e)
@@ -364,6 +405,7 @@ void handle_gesture(MicroBitEvent e)
     {
         if(e.value == MICROBIT_ACCELEROMETER_EVT_SHAKE)
         {
+            //Clear
             char_reset();
             uBit.display.clear();
             uBit.display.stopAnimation();
@@ -379,6 +421,7 @@ int main()
     
     uBit.serial.baud(115200);
     
+    //Setup Event Handlers
     uBit.messageBus.listen(MICROBIT_ID_BUTTON_AB, MICROBIT_EVT_ANY, handle_button_AB, MESSAGE_BUS_LISTENER_REENTRANT);
     uBit.messageBus.listen(MICROBIT_ID_BUTTON_A, MICROBIT_EVT_ANY, handle_button_A, MESSAGE_BUS_LISTENER_REENTRANT);
     uBit.messageBus.listen(MICROBIT_ID_BUTTON_B, MICROBIT_EVT_ANY, handle_button_B, MESSAGE_BUS_LISTENER_REENTRANT);
