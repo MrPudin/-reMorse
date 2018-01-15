@@ -205,7 +205,7 @@ char *insert_data()
     *insert_pos = '\0';
     return insert_buf;
 }
-
+\
 size_t insert_size()
 {
     return insert_pos - insert_buf;
@@ -238,8 +238,8 @@ void telecom_send(char *data, size_t len)
 {
     uBit.radio.datagram.send(ManagedString(telecom_marker_begin));
     size_t send_len = (len < MED_TELECOM_BUF_LEN) ? len : MED_TELECOM_BUF_LEN;
-
-    char packet_buf[2] = {'0', '0'};
+\
+    char packet_buf[2] = {'0', '\0'};
     for(size_t i = 0; i < send_len; i++)
     {
         packet_buf[0] = *(data + i);
@@ -267,6 +267,7 @@ void handle_telecom(MicroBitEvent e)
     if(e.value == MICROBIT_RADIO_EVT_DATAGRAM)
     {
         ManagedString s = uBit.radio.datagram.recv();
+        //uBit.serial.printf("handle_telecom(): data: %s\r\n",s.toCharArray());
         if(s == ManagedString(telecom_marker_begin))
         {
             telecom_reset();
@@ -310,12 +311,26 @@ void handle_button_A(MicroBitEvent e)
     }
     else if(med_operation_mode == MODE_TELECOM)
     {
-        //Broadcast currently inserted
-        telecom_send(insert_data(), insert_size());
+        if (e.value == MICROBIT_BUTTON_EVT_HOLD)
+        {
+            //Broadcast currently inserted
+            telecom_send(insert_data(), insert_size());
 
-        uBit.display.print(image_upload);
-        uBit.sleep(1000);
-        uBit.display.clear();
+            uBit.display.print(image_upload);
+            uBit.sleep(1000);
+            uBit.display.clear();
+        }
+        else if (e.value == MICROBIT_BUTTON_EVT_CLICK)
+        {
+            //Print insert buffer
+            uBit.display.clear();
+            uBit.display.scroll(insert_data());
+            uBit.display.clear();
+
+            char msg_len[12];
+            snprintf(msg_len, 12, "[LEN:%d]", insert_size()%9000);
+            uBit.display.scroll(msg_len, 50);
+        }
     }
 }
 
@@ -347,13 +362,28 @@ void handle_button_B(MicroBitEvent e)
     }
     else if(med_operation_mode == MODE_TELECOM)
     {
-        //Display Recieved
-        uBit.display.print(image_download);
-        uBit.sleep(500);
-        uBit.display.clear();
-        
-        uBit.display.scroll(telecom_recieve_buf);
-        uBit.display.clear();
+		if (e.value == MICROBIT_BUTTON_EVT_HOLD)
+        {
+			//Display Recieved
+			uBit.display.print(image_download);
+			uBit.sleep(500);
+			uBit.display.clear();
+			
+			uBit.display.scroll(telecom_recieve_buf);
+			uBit.display.clear();
+		}
+        else if (e.value == MICROBIT_BUTTON_EVT_CLICK)
+        {
+            //Delete Insert Buffer
+            insert_reset();
+
+            uBit.display.print(image_delete);
+            uBit.sleep(500);
+            uBit.display.clear();
+            uBit.display.print(image_delete);
+            uBit.sleep(500);
+            uBit.display.clear();
+        }
     }
 }
 
@@ -425,7 +455,7 @@ int main()
     uBit.messageBus.listen(MICROBIT_ID_BUTTON_AB, MICROBIT_EVT_ANY, handle_button_AB, MESSAGE_BUS_LISTENER_REENTRANT);
     uBit.messageBus.listen(MICROBIT_ID_BUTTON_A, MICROBIT_EVT_ANY, handle_button_A, MESSAGE_BUS_LISTENER_REENTRANT);
     uBit.messageBus.listen(MICROBIT_ID_BUTTON_B, MICROBIT_EVT_ANY, handle_button_B, MESSAGE_BUS_LISTENER_REENTRANT);
-    uBit.messageBus.listen(MICROBIT_ID_GESTURE, MICROBIT_EVT_ANY, handle_gesture, MESSAGE_BUS_LISTENER_REENTRANT);
+    uBit.messageBus.listen(MICROBIT_ID_GESTURE, MICROBIT_EVT_ANY, handle_gesture);
 
     uBit.messageBus.listen(MICROBIT_ID_RADIO, MICROBIT_RADIO_EVT_DATAGRAM, handle_telecom);
     uBit.radio.setGroup(MED_TELECOM_GROUP);
